@@ -43,6 +43,12 @@ function toStoreProduct(product) {
   const specRecord = product.productSpec || product.productSpecs;
   const specs = specRecordToList(specRecord);
 
+  const reviewList = product.reviews || [];
+  const reviewsCount = reviewList.length;
+  const rating = reviewsCount > 0
+    ? Number((reviewList.reduce((acc, r) => acc + Number(r.rating || 5), 0) / reviewsCount).toFixed(1))
+    : 5.0;
+
   return {
     id: product.slug,
     databaseId: product.id,
@@ -53,8 +59,8 @@ function toStoreProduct(product) {
     price,
     oldPrice: product.salePrice ? regularPrice : null,
     quantity: product.quantity,
-    rating: 5.0,
-    reviews: 0,
+    rating,
+    reviews: reviewsCount,
     image: product.thumbnail,
     badge: product.isFeatured ? 'NỔI BẬT' : null,
     description: product.description,
@@ -75,7 +81,10 @@ export const getAllService = async (query = {}) => {
   if (query.categoryId) where.categoryId = Number(query.categoryId);
 
   const products = await Product.findAll({
-    include: [{ model: Category, as: 'category', required: false }],
+    include: [
+      { model: Category, as: 'category', required: false },
+      { model: Review, as: 'reviews', attributes: ['rating'], required: false },
+    ],
     where,
     order: [['id', 'DESC']],
   });
@@ -100,6 +109,7 @@ export const getByIdService = async (id) => {
     include: [
       { model: Category, as: 'category', required: false },
       { model: ProductSpec, as: 'productSpec', required: false },
+      { model: Review, as: 'reviews', attributes: ['rating'], required: false },
     ],
   });
   if (!product) throw Object.assign(new Error('Không tìm thấy sản phẩm.'), { statusCode: 404 });

@@ -62,5 +62,5 @@ export const connectDB = async () => {
     process.exit(1); // Thoát tiến trình nếu không kết nối được DB
   }
 };
-
+export { sequelize };
 export default sequelize;
