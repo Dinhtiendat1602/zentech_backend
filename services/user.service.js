@@ -136,7 +136,29 @@ export const removeWishlistService = async (userId, slug) => {
   return { removed: true };
 };
 
-export const getAllService = async ({ q = '' } = {}) => {
+export const getAllService = async ({ q = '', range = 'month', startDate, endDate, allTime } = {}) => {
+  const replacements = { q, pattern: `%${q}%` };
+  let dateCondition = '';
+
+  if (allTime === 'true' || range === 'all') {
+    // Không lọc thời gian -> tải tất cả người dùng từ trước
+  } else if (startDate || endDate) {
+    if (startDate && endDate) {
+      dateCondition = 'AND u.created_at >= :startDate::timestamptz AND u.created_at <= :endDate::timestamptz';
+      replacements.startDate = `${startDate} 00:00:00`;
+      replacements.endDate = `${endDate} 23:59:59.999`;
+    } else if (startDate) {
+      dateCondition = 'AND u.created_at >= :startDate::timestamptz';
+      replacements.startDate = `${startDate} 00:00:00`;
+    } else if (endDate) {
+      dateCondition = 'AND u.created_at <= :endDate::timestamptz';
+      replacements.endDate = `${endDate} 23:59:59.999`;
+    }
+  } else {
+    // Mặc định: 1 tháng gần nhất
+    dateCondition = "AND u.created_at >= CURRENT_DATE - INTERVAL '30 days'";
+  }
+
   const result = await sequelize.query(
     `SELECT u.id, u.full_name, u.email, u.phone, u.is_active, u.created_at,
             COUNT(DISTINCT o.id)::int AS order_count,
@@ -144,10 +166,11 @@ export const getAllService = async ({ q = '' } = {}) => {
      FROM users u
      LEFT JOIN orders o ON o.user_id = u.id
      WHERE u.role <> 'admin'
+       ${dateCondition}
        AND (:q = '' OR u.full_name ILIKE :pattern OR u.email ILIKE :pattern OR COALESCE(u.phone, '') ILIKE :pattern)
      GROUP BY u.id
      ORDER BY u.created_at DESC`,
-    { replacements: { q, pattern: `%${q}%` }, type: QueryTypes.SELECT },
+    { replacements, type: QueryTypes.SELECT },
   );
   return result;
 };

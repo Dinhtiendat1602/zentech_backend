@@ -72,6 +72,12 @@ export default class Promotion extends Model {
       allowNull: true,
       defaultValue: true,
       field: 'is_active'
+    },
+    createdAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
+      field: 'created_at'
     }
   }, {
     sequelize,

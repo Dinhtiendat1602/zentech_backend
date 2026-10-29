@@ -20,7 +20,7 @@ export default class ProductImage extends Model {
       field: 'product_id'
     },
     imageUrl: {
-      type: DataTypes.STRING(255),
+      type: DataTypes.TEXT,
       allowNull: false,
       field: 'image_url'
     },

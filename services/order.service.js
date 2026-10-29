@@ -4,14 +4,21 @@ import { sendOrderNotificationEmails } from './mail.service.js';
 
 const fail = (message, statusCode) => Object.assign(new Error(message), { statusCode });
 const orderIncludes = [
-  { model: OrderItem, as: 'orderItems', attributes: ['id', 'productName', 'quantity', 'price', 'total'] },
+  {
+    model: OrderItem,
+    as: 'orderItems',
+    attributes: ['id', 'productId', 'productName', 'quantity', 'price', 'total'],
+    include: [
+      { model: Product, as: 'product', attributes: ['id', 'name', 'thumbnail', 'slug'], required: false },
+    ],
+  },
   { model: User, as: 'user', attributes: ['id', 'fullName', 'email'], required: false },
   { model: Promotion, as: 'promotion', attributes: ['id', 'code', 'name', 'discountType', 'discountValue'], required: false },
 ];
 
 export const getAllService = async (query = {}) => {
   const where = {};
-  if (query.status) where.status = query.status;
+  if (query.status && query.status !== 'all') where.status = query.status;
   if (query.q) {
     where[Op.or] = [
       { orderCode: { [Op.iLike]: `%${query.q}%` } },
@@ -21,7 +28,32 @@ export const getAllService = async (query = {}) => {
       { customerAddress: { [Op.iLike]: `%${query.q}%` } },
     ];
   }
-  return Order.findAll({ where, include: orderIncludes, order: [['id', 'DESC']] });
+
+  // Lọc theo thời gian: mặc định 1 tháng gần nhất, chỉ load đơn cũ khi chọn ngày hoặc chọn 'all'
+  if (query.allTime === 'true' || query.range === 'all') {
+    // Không lọc ngày -> tải tất cả đơn hàng từ trước
+  } else if (query.startDate || query.endDate) {
+    const dateCondition = {};
+    if (query.startDate) {
+      const start = new Date(query.startDate);
+      start.setHours(0, 0, 0, 0);
+      dateCondition[Op.gte] = start;
+    }
+    if (query.endDate) {
+      const end = new Date(query.endDate);
+      end.setHours(23, 59, 59, 999);
+      dateCondition[Op.lte] = end;
+    }
+    where.createdAt = dateCondition;
+  } else {
+    // Mặc định: 1 tháng gần nhất (30 ngày trước đến hiện tại)
+    const oneMonthAgo = new Date();
+    oneMonthAgo.setDate(oneMonthAgo.getDate() - 30);
+    oneMonthAgo.setHours(0, 0, 0, 0);
+    where.createdAt = { [Op.gte]: oneMonthAgo };
+  }
+
+  return Order.findAll({ where, include: orderIncludes, order: [['createdAt', 'DESC'], ['id', 'DESC']] });
 };
 
 export const getByIdService = async (id) => {
@@ -144,6 +176,7 @@ export const updateService = async (id, data = {}) => {
   const allowedStatuses = ['pending', 'confirmed', 'shipping', 'completed', 'cancelled'];
   const allowedPayments = ['unpaid', 'paid', 'failed'];
   const updates = {};
+
   if (data.status !== undefined) {
     if (!allowedStatuses.includes(data.status)) throw fail('Trạng thái đơn hàng không hợp lệ.', 400);
 
@@ -159,10 +192,49 @@ export const updateService = async (id, data = {}) => {
 
     updates.status = data.status;
   }
+
   if (data.paymentStatus !== undefined) {
     if (!allowedPayments.includes(data.paymentStatus)) throw fail('Trạng thái thanh toán không hợp lệ.', 400);
     updates.paymentStatus = data.paymentStatus;
   }
+
+  if (data.customerName !== undefined) {
+    const val = String(data.customerName || '').trim();
+    if (!val) throw fail('Họ và tên người nhận không được để trống.', 400);
+    updates.customerName = val;
+  }
+
+  if (data.customerPhone !== undefined) {
+    const val = String(data.customerPhone || '').trim();
+    if (!val) throw fail('Số điện thoại người nhận không được để trống.', 400);
+    updates.customerPhone = val;
+  }
+
+  if (data.customerEmail !== undefined) {
+    const val = String(data.customerEmail || '').trim();
+    if (!val) throw fail('Email người nhận không được để trống.', 400);
+    updates.customerEmail = val;
+  }
+
+  if (data.customerAddress !== undefined) {
+    const val = String(data.customerAddress || '').trim();
+    if (!val) throw fail('Địa chỉ nhận hàng không được để trống.', 400);
+    updates.customerAddress = val;
+  }
+
+  if (data.note !== undefined) {
+    updates.note = data.note ? String(data.note).trim() : null;
+  }
+
+  if (data.shippingFee !== undefined) {
+    const newShippingFee = Number(data.shippingFee);
+    if (isNaN(newShippingFee) || newShippingFee < 0) throw fail('Phí vận chuyển không hợp lệ.', 400);
+    updates.shippingFee = newShippingFee;
+    const totalAmount = Number(order.totalAmount || 0);
+    const discountAmount = Number(order.discountAmount || 0);
+    updates.finalAmount = Math.max(0, totalAmount + newShippingFee - discountAmount);
+  }
+
   if (!Object.keys(updates).length) throw fail('Không có thông tin hợp lệ để cập nhật.', 400);
   await order.update(updates);
   return getByIdService(id);

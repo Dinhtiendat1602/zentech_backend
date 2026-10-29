@@ -30,6 +30,39 @@ function promotionValues(data = {}) {
 export const getAllService = async (query = {}) => {
   const where = {};
   if (query.q) where[Op.or] = [{ code: { [Op.iLike]: `%${query.q}%` } }, { name: { [Op.iLike]: `%${query.q}%` } }, { description: { [Op.iLike]: `%${query.q}%` } }];
+
+  // Lọc theo thời gian: mặc định 1 tháng gần nhất, chỉ load mã cũ khi chọn ngày hoặc chọn 'all'
+  if (query.allTime === 'true' || query.range === 'all') {
+    // Không lọc ngày -> tải tất cả mã giảm giá từ trước
+  } else if (query.startDate || query.endDate) {
+    const dateCondition = {};
+    if (query.startDate) {
+      const s = new Date(query.startDate);
+      s.setHours(0, 0, 0, 0);
+      dateCondition[Op.gte] = s;
+    }
+    if (query.endDate) {
+      const e = new Date(query.endDate);
+      e.setHours(23, 59, 59, 999);
+      dateCondition[Op.lte] = e;
+    }
+    where[Op.or] = [
+      { createdAt: dateCondition },
+      { startDate: dateCondition },
+      { endDate: dateCondition },
+    ];
+  } else {
+    // Mặc định: 1 tháng gần nhất (30 ngày trước đến nay)
+    const oneMonthAgo = new Date();
+    oneMonthAgo.setDate(oneMonthAgo.getDate() - 30);
+    oneMonthAgo.setHours(0, 0, 0, 0);
+    where[Op.or] = [
+      { createdAt: { [Op.gte]: oneMonthAgo } },
+      { startDate: { [Op.gte]: oneMonthAgo } },
+      { endDate: { [Op.gte]: oneMonthAgo } },
+    ];
+  }
+
   return Promotion.findAll({ where, order: [['id', 'DESC']] });
 };
 

@@ -49,6 +49,23 @@ function toStoreProduct(product) {
     ? Number((reviewList.reduce((acc, r) => acc + Number(r.rating || 5), 0) / reviewsCount).toFixed(1))
     : 5.0;
 
+  // Lấy danh sách ảnh con từ productImages
+  const imageList = [];
+  if (product.thumbnail) {
+    imageList.push(product.thumbnail);
+  }
+  const relatedImages = product.productImages || [];
+  relatedImages.forEach((img) => {
+    const url = img.imageUrl || img.image_url;
+    if (url && !imageList.includes(url)) {
+      imageList.push(url);
+    }
+  });
+
+  const subImages = relatedImages
+    .map((img) => img.imageUrl || img.image_url)
+    .filter((url) => Boolean(url) && url !== product.thumbnail);
+
   return {
     id: product.slug,
     databaseId: product.id,
@@ -62,6 +79,8 @@ function toStoreProduct(product) {
     rating,
     reviews: reviewsCount,
     image: product.thumbnail,
+    images: imageList,
+    subImages,
     badge: product.isFeatured ? 'NỔI BẬT' : null,
     description: product.description,
     specs,
@@ -83,6 +102,7 @@ export const getAllService = async (query = {}) => {
   const products = await Product.findAll({
     include: [
       { model: Category, as: 'category', required: false },
+      { model: ProductImage, as: 'productImages', required: false },
       { model: Review, as: 'reviews', attributes: ['rating'], required: false },
     ],
     where,
@@ -109,7 +129,11 @@ export const getByIdService = async (id) => {
     include: [
       { model: Category, as: 'category', required: false },
       { model: ProductSpec, as: 'productSpec', required: false },
+      { model: ProductImage, as: 'productImages', required: false },
       { model: Review, as: 'reviews', attributes: ['rating'], required: false },
+    ],
+    order: [
+      [{ model: ProductImage, as: 'productImages' }, 'sortOrder', 'ASC'],
     ],
   });
   if (!product) throw Object.assign(new Error('Không tìm thấy sản phẩm.'), { statusCode: 404 });
@@ -131,11 +155,26 @@ export const getAdminProductsService = async ({ q = '', categoryId = '' } = {}) 
     include: [
       { model: Category, as: 'category', attributes: ['id', 'name', 'type'] },
       { model: ProductSpec, as: 'productSpec', required: false },
+      { model: ProductImage, as: 'productImages', required: false },
     ],
-    order: [['id', 'DESC']],
+    order: [
+      ['id', 'DESC'],
+      [{ model: ProductImage, as: 'productImages' }, 'sortOrder', 'ASC'],
+    ],
   });
   return products.map((product) => {
     const specRecord = product.productSpec || product.productSpecs;
+    const relatedImages = product.productImages || [];
+    const imageList = [];
+    if (product.thumbnail) imageList.push(product.thumbnail);
+    relatedImages.forEach((img) => {
+      const url = img.imageUrl || img.image_url;
+      if (url && !imageList.includes(url)) imageList.push(url);
+    });
+    const subImages = relatedImages
+      .map((img) => img.imageUrl || img.image_url)
+      .filter((url) => Boolean(url) && url !== product.thumbnail);
+
     return {
       id: product.id,
       slug: product.slug,
@@ -149,6 +188,8 @@ export const getAdminProductsService = async ({ q = '', categoryId = '' } = {}) 
       salePrice: product.salePrice === null ? null : Number(product.salePrice),
       stock: product.quantity,
       image: product.thumbnail,
+      images: imageList,
+      subImages,
       description: product.description,
       isFeatured: product.isFeatured,
       totalSold: product.totalSold,
@@ -307,6 +348,64 @@ async function syncProductSpecs(productId, rawSpecs) {
   }
 }
 
+export async function syncProductImages(productId, thumbnail, rawSubImages) {
+  if (!productId) return;
+
+  if (rawSubImages !== undefined) {
+    let subImages = [];
+    if (Array.isArray(rawSubImages)) {
+      subImages = rawSubImages.filter((url) => typeof url === 'string' && url.trim().length > 0).map((u) => u.trim());
+    } else if (typeof rawSubImages === 'string') {
+      try {
+        const parsed = JSON.parse(rawSubImages);
+        if (Array.isArray(parsed)) {
+          subImages = parsed.filter((url) => typeof url === 'string' && url.trim().length > 0).map((u) => u.trim());
+        }
+      } catch {
+        if (rawSubImages.trim()) subImages = [rawSubImages.trim()];
+      }
+    }
+    // Lọc trùng và không lưu thumbnail thành ảnh phụ
+    subImages = [...new Set(subImages)].filter((url) => url !== thumbnail);
+
+    // Xóa toàn bộ ảnh cũ của sản phẩm này
+    await ProductImage.destroy({ where: { productId } });
+
+    // Tạo thumbnail chính (isPrimary: true, sortOrder: 1)
+    if (thumbnail) {
+      await ProductImage.create({
+        productId,
+        imageUrl: thumbnail,
+        isPrimary: true,
+        sortOrder: 1,
+      });
+    }
+
+    // Tạo các ảnh phụ (isPrimary: false, sortOrder: 2, 3, ...)
+    for (let i = 0; i < subImages.length; i++) {
+      await ProductImage.create({
+        productId,
+        imageUrl: subImages[i],
+        isPrimary: false,
+        sortOrder: i + 2,
+      });
+    }
+  } else if (thumbnail) {
+    // Chỉ cập nhật thumbnail
+    const primaryImg = await ProductImage.findOne({ where: { productId, isPrimary: true } });
+    if (primaryImg) {
+      await primaryImg.update({ imageUrl: thumbnail });
+    } else {
+      await ProductImage.create({
+        productId,
+        imageUrl: thumbnail,
+        isPrimary: true,
+        sortOrder: 1,
+      });
+    }
+  }
+}
+
 export const createService = async (data) => {
   const values = productValues(data);
   const category = await Category.findByPk(values.categoryId);
@@ -325,6 +424,7 @@ export const createService = async (data) => {
   if (data.specs !== undefined) {
     await syncProductSpecs(product.id, data.specs);
   }
+  await syncProductImages(product.id, values.thumbnail, data.subImages);
 
   return (await getAdminProductsService()).find((item) => item.id === product.id);
 };
@@ -359,6 +459,9 @@ export const updateService = async (id, data) => {
   if (data.specs !== undefined) {
     await syncProductSpecs(product.id, data.specs);
   }
+  if (data.subImages !== undefined || values.thumbnail !== product.thumbnail) {
+    await syncProductImages(product.id, values.thumbnail, data.subImages);
+  }
 
   return (await getAdminProductsService()).find((item) => item.id === product.id);
 };
@@ -366,13 +469,11 @@ export const updateService = async (id, data) => {
 export const removeService = async (id) => {
   const product = await Product.findByPk(id);
   if (!product) throw Object.assign(new Error('Không tìm thấy sản phẩm.'), { statusCode: 404 });
-  const dependencies = await Promise.all([
-    ProductImage.count({ where: { productId: id } }),
-    Review.count({ where: { productId: id } }),
-  ]);
-  if (dependencies.some(Boolean)) {
-    throw Object.assign(new Error('Không thể xóa sản phẩm đã có ảnh hoặc đánh giá.'), { statusCode: 409 });
+  const reviewCount = await Review.count({ where: { productId: id } });
+  if (reviewCount > 0) {
+    throw Object.assign(new Error('Không thể xóa sản phẩm đã có đánh giá.'), { statusCode: 409 });
   }
+  await ProductImage.destroy({ where: { productId: id } });
   await ProductSpec.destroy({ where: { productId: id } });
   const rows = await Product.destroy({ where: { id } });
   return rows > 0;

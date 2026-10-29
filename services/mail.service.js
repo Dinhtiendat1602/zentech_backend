@@ -63,8 +63,8 @@ export const sendOrderNotificationEmails = async (order) => {
   const paymentMethodName = paymentMethod === 'bank'
     ? 'Chuyển khoản VietQR (Ngân hàng VPBank)'
     : paymentMethod === 'cod'
-    ? 'Thanh toán tiền mặt khi nhận hàng (COD)'
-    : String(paymentMethod).toUpperCase();
+      ? 'Thanh toán tiền mặt khi nhận hàng (COD)'
+      : String(paymentMethod).toUpperCase();
 
   const orderDate = new Date(order.createdAt || Date.now());
   const orderTimeStr = new Intl.DateTimeFormat('vi-VN', {
